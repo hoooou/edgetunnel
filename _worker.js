@@ -2316,6 +2316,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 				} else {
 					log(`[反代连接] 代理到: ${host}:${portNum}`);
 					const 所有反代数组 = await 解析地址端口(ctx反代IP, host, yourUUID);
+					log(`[反代连接] 解析反代候选: ${所有反代数组.length} 个 | ${ctx反代IP}`);
 					newSocket = await connectProxyIP(`${特征码字典[0]}.tp1.${特征码字典[2]}.xyz`, 1, 本次首包数据, 所有反代数组, ctx反代兜底);
 				}
 				await 安装当前连接(newSocket, 当前连接世代, downlinkDrain);
@@ -2341,7 +2342,15 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 	}
 	remoteConnWrapper.retryConnect = async () => connecttoPry(!已通过代理发送首包);
 
-	if (ctx代理类型 && (ctx代理全局 || SOCKS5白名单.some(p => new RegExp(`^${p.replace(/\*/g, '.*')}$`, 'i').test(host)))) {
+	if (ctx代理全局) {
+		log(`[TCP转发] 启用全局代理: ${ctx代理类型 || 'proxyip'}`);
+		try {
+			await connecttoPry();
+		} catch (err) {
+			log(`[TCP转发] 全局代理连接失败: ${err.message}`);
+			throw err;
+		}
+	} else if (ctx代理类型 && SOCKS5白名单.some(p => new RegExp(`^${p.replace(/\*/g, '.*')}$`, 'i').test(host))) {
 		log(`[TCP转发] 启用 SOCKS5/HTTP/HTTPS/TURN/SSTP 全局代理`);
 		try {
 			await connecttoPry();
