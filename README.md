@@ -122,6 +122,10 @@
 | **KEY** | ❌ | `CMLiussss` | 快速订阅路径密钥，访问 `/CMLiussss` 即可快速获取节点 |
 | **UUID** | ❌ | `90cd4a77-141a-43c9-991b-08263cfe9c10` | 强制固定UUID，只支持**UUIDv4**标准格式 |
 | **PROXYIP** | ❌ | `proxyip.cmliussss.net:443` | 全局自定义反代 IP  |
+| **PROXYIP_COUNTRY_ALLOW** | ❌ | `SG,JP,TW,US,CA` | ProxyIP 国家/地区白名单；留空时关闭过滤，只允许两位 ISO 国家代码 |
+| **PROXYIP_COUNTRY_API** | ❌ | `https://api.country.is/` | ProxyIP 国家查询 API，需兼容 `POST` JSON IP 数组并返回 `[{"ip":"...","country":"SG"}]` |
+| **PROXYIP_COUNTRY_CACHE_TTL** | ❌ | `86400` | 国家查询结果的内存缓存时间，单位秒 |
+| **PROXYIP_COUNTRY_FAIL_OPEN** | ❌ | `false` | GeoIP 查询失败或地址无法识别时是否保留候选；默认关闭以避免未知地区进入 ProxyIP 池 |
 | **URL** | ❌ | `https://cloudflare-error-page-3th.pages.dev` | 默认主页伪装地址（可填写网页 URL 或 `1101`） |
 | **GO2SOCKS5** | ❌ | `blog.cmliussss.com`,`*.ip111.cn`,`*google.com` | 强制走 SOCKS5 的名单 (`*` 为全局，域名用逗号分隔) |
 | **DEBUG** | ❌ | `1`或`true` | **开发者模式**，默认**关闭**调试日志功能（console.log），设置`1`或`true`则**开启**调试日志功能 |
@@ -145,6 +149,19 @@
    /proxyip=proxyip.cmliussss.net
    /?proxyip=proxyip.cmliussss.net
    ```
+
+- ProxyIP 国家/地区白名单案例
+
+   在 Worker 环境变量中设置：
+
+   ```text
+   PROXYIP_COUNTRY_ALLOW=SG,JP,TW,US,CA
+   PROXYIP_COUNTRY_API=https://api.country.is/
+   PROXYIP_COUNTRY_CACHE_TTL=86400
+   PROXYIP_COUNTRY_FAIL_OPEN=false
+   ```
+
+   启用后，EdgeTunnel 会先展开 ProxyIP 的 TXT/A/AAAA 记录，再批量查询真实 IP 的国家代码；只有白名单国家会进入后续排序、洗牌和拨号候选。默认失败关闭：GeoIP API 不可用、未知国家或无法解析的域名候选都会被排除。如果希望查询失败时维持原有可用性，可将 `PROXYIP_COUNTRY_FAIL_OPEN` 设为 `true`，但这会降低地区约束强度。该过滤只影响 ProxyIP 反代候选，不会过滤订阅节点的入口 `server` IP。
 
 - 指定 `SOCKS5` 案例
    ```url

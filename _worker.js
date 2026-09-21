@@ -7,6 +7,79 @@ const WS早期数据最大字节 = 8 * 1024, WS早期数据最大头长度 = Mat
 const 上行合包目标字节 = 20 * 1024, 上行队列最大字节 = 16 * 1024 * 1024, 上行队列最大条目 = 4096;
 const 下行Grain包字节 = 32 * 1024, 下行Grain尾部阈值 = 512, 下行Grain低水位字节 = Math.max(4096, 下行Grain尾部阈值 * 12), 下行Grain最大等待轮次 = 4;
 let TCP并发拨号数 = 2, 反代并发拨号数 = 1, 预加载竞速拨号 = false;
+let 当前反代国家过滤配置 = 解析反代国家过滤配置({});
+const 反代国家查询缓存 = new Map();
+
+function 解析国家代码白名单(值) {
+	const 结果 = new Set();
+	for (const 项 of String(值 || '').split(',')) {
+		const 国家代码 = 项.trim().toUpperCase();
+		if (/^[A-Z]{2}$/.test(国家代码)) 结果.add(国家代码);
+	}
+	return 结果;
+}
+
+function 解析反代国家过滤配置(env = {}) {
+	const 缓存秒 = Math.max(0, Number(env.PROXYIP_COUNTRY_CACHE_TTL) || 24 * 60 * 60);
+	return {
+		允许国家: 解析国家代码白名单(env.PROXYIP_COUNTRY_ALLOW),
+		查询API: String(env.PROXYIP_COUNTRY_API || 'https://api.country.is/').trim(),
+		缓存毫秒: 缓存秒 * 1000,
+		查询失败放行: ['1', 'true'].includes(String(env.PROXYIP_COUNTRY_FAIL_OPEN || '').toLowerCase())
+	};
+}
+
+function 筛选反代国家候选(候选列表, 国家映射, 允许国家, 查询失败放行 = false) {
+	if (!(允许国家 instanceof Set) || 允许国家.size === 0) return 候选列表;
+	return 候选列表.filter(([地址]) => {
+		const 标准地址 = String(地址 || '').replace(/^\[|\]$/g, '');
+		const 国家代码 = String(国家映射.get(标准地址) || '').toUpperCase();
+		if (!国家代码) return 查询失败放行;
+		return 允许国家.has(国家代码);
+	});
+}
+
+async function 查询反代IP国家(IP列表, 查询API = 'https://api.country.is/', 缓存毫秒 = 24 * 60 * 60 * 1000, fetcher = fetch, 当前时间 = Date.now()) {
+	const 去重IP = [...new Set((IP列表 || []).map(ip => String(ip || '').replace(/^\[|\]$/g, '')).filter(Boolean))];
+	const 结果 = new Map(), 待查询 = [];
+	for (const ip of 去重IP) {
+		const 缓存项 = 反代国家查询缓存.get(ip);
+		if (缓存项 && 缓存项.过期时间 > 当前时间) 结果.set(ip, 缓存项.国家代码);
+		else 待查询.push(ip);
+	}
+	for (let i = 0; i < 待查询.length; i += 100) {
+		const 本批IP = 待查询.slice(i, i + 100);
+		try {
+			const response = await fetcher(查询API, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+				body: JSON.stringify(本批IP)
+			});
+			if (!response.ok) throw new Error(`GeoIP HTTP ${response.status || 'error'}`);
+			const 数据 = await response.json();
+			if (!Array.isArray(数据)) throw new Error('GeoIP response is not an array');
+			for (const 项 of 数据) {
+				const ip = String(项?.ip || '').replace(/^\[|\]$/g, '');
+				const 国家代码 = String(项?.country || '').trim().toUpperCase();
+				if (!ip || !/^[A-Z]{2}$/.test(国家代码)) continue;
+				结果.set(ip, 国家代码);
+				反代国家查询缓存.set(ip, { 国家代码, 过期时间: 当前时间 + Math.max(0, Number(缓存毫秒) || 0) });
+			}
+		} catch (error) {
+			log(`[反代国家过滤] GeoIP 查询失败: ${error?.message || error}`);
+		}
+	}
+	return 结果;
+}
+
+async function 应用反代国家过滤(候选列表, 配置 = 当前反代国家过滤配置, 查询器 = 查询反代IP国家) {
+	if (!配置?.允许国家 || 配置.允许国家.size === 0) return 候选列表;
+	const 可查询IP = [...new Set(候选列表.map(([地址]) => String(地址 || '').replace(/^\[|\]$/g, '')).filter(地址 => /^(?:\d{1,3}\.){3}\d{1,3}$/.test(地址) || 地址.includes(':')))];
+	const 国家映射 = await 查询器(可查询IP, 配置.查询API, 配置.缓存毫秒);
+	const 过滤结果 = 筛选反代国家候选(候选列表, 国家映射, 配置.允许国家, 配置.查询失败放行);
+	log(`[反代国家过滤] 白名单: ${[...配置.允许国家].join(',')} | 过滤前: ${候选列表.length} | 过滤后: ${过滤结果.length} | 查询失败放行: ${配置.查询失败放行 ? '是' : '否'}`);
+	return 过滤结果;
+}
 ///////////////////////////////////////////////////////查杀特征码///////////////////////////////////////////////
 const 特征码字典 = [
 	(Proxy.name + "IP").toUpperCase(),
@@ -38,6 +111,7 @@ export default {
 		调试日志打印 = ['1', 'true'].includes(env.DEBUG) || 调试日志打印;
 		预加载竞速拨号 = ['1', 'true'].includes(env.PRELOAD_RACE_DIAL) || 预加载竞速拨号;
 		反代并发拨号数 = Math.max(1, Number(env.PROXY_CONCURRENT_DIAL) || 反代并发拨号数);
+		当前反代国家过滤配置 = 解析反代国家过滤配置(env);
 		TCP并发拨号数 = Math.max(1, Number(env.TCP_CONCURRENT_DIAL) || TCP并发拨号数);
 		if (!env.TCP_CONCURRENT_DIAL && TCP并发拨号数 !== 1 && 识别运营商(request) === 'cmcc') TCP并发拨号数 = 1;
 		let 默认反代IP = (`${request.cf.colo}.${特征码字典[0]}.${特征码字典[1]}SsSs.nEt`).toLowerCase(), 默认反代兜底 = true;
@@ -6508,6 +6582,7 @@ async function 解析地址端口(proxyIP, 目标域名 = 'dash.cloudflare.com',
 			所有反代数组.push([地址, 端口]);
 		}
 	}
+	所有反代数组 = await 应用反代国家过滤(所有反代数组, 当前反代国家过滤配置);
 	const 排序后数组 = 所有反代数组.sort((a, b) => a[0].localeCompare(b[0]));
 	const 目标根域名 = 目标域名.includes('.') ? 目标域名.split('.').slice(-2).join('.') : 目标域名;
 	let 随机种子 = [...(目标根域名 + UUID)].reduce((a, c) => a + c.charCodeAt(0), 0);
