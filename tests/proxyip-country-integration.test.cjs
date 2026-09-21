@@ -42,7 +42,7 @@ const disabled = context.解析反代国家过滤配置({});
 assert.deepEqual([...disabled.允许国家], ['SG', 'JP', 'TW', 'US', 'CA']);
 assert.deepEqual([...disabled.服务列表], ['country-is', 'ip-api', 'ipwho-is']);
 assert.equal(disabled.查询失败放行, false);
-assert.equal(disabled.缓存毫秒, 86_400_000);
+assert.equal(disabled.缓存毫秒, 36_000_000);
 
 const configured = context.解析反代国家过滤配置({
   PROXYIP_COUNTRY_ALLOW: 'DE,FR',

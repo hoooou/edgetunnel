@@ -31,8 +31,8 @@ function 解析反代国家服务列表(值) {
 function 解析反代国家过滤配置(env = {}) {
 	const 白名单值 = env.PROXYIP_COUNTRY_ALLOW === undefined ? 'SG,JP,TW,US,CA' : env.PROXYIP_COUNTRY_ALLOW;
 	const 服务值 = env.PROXYIP_COUNTRY_PROVIDERS === undefined ? 'country-is,ip-api,ipwho-is' : env.PROXYIP_COUNTRY_PROVIDERS;
-	const 缓存原始值 = env.PROXYIP_COUNTRY_CACHE_TTL === undefined ? 24 * 60 * 60 : Number(env.PROXYIP_COUNTRY_CACHE_TTL);
-	const 缓存秒 = Number.isFinite(缓存原始值) ? Math.max(0, 缓存原始值) : 24 * 60 * 60;
+	const 缓存原始值 = env.PROXYIP_COUNTRY_CACHE_TTL === undefined ? 10 * 60 * 60 : Number(env.PROXYIP_COUNTRY_CACHE_TTL);
+	const 缓存秒 = Number.isFinite(缓存原始值) ? Math.max(0, 缓存原始值) : 10 * 60 * 60;
 	return {
 		允许国家: 解析国家代码白名单(白名单值),
 		服务列表: 解析反代国家服务列表(服务值),
@@ -103,7 +103,7 @@ async function 查询单个反代国家服务(服务, IP列表, fetcher = fetch)
 	return 结果;
 }
 
-async function 查询反代IP国家(IP列表, 服务列表 = ['country-is', 'ip-api', 'ipwho-is'], 缓存毫秒 = 24 * 60 * 60 * 1000, fetcher = fetch, 当前时间 = Date.now()) {
+async function 查询反代IP国家(IP列表, 服务列表 = ['country-is', 'ip-api', 'ipwho-is'], 缓存毫秒 = 10 * 60 * 60 * 1000, fetcher = fetch, 当前时间 = Date.now()) {
 	const 去重IP = [...new Set((IP列表 || []).map(ip => String(ip || '').replace(/^\[|\]$/g, '')).filter(Boolean))];
 	const 结果 = new Map(), 待查询 = new Set();
 	for (const ip of 去重IP) {

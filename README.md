@@ -123,7 +123,7 @@
 | **UUID** | ❌ | `90cd4a77-141a-43c9-991b-08263cfe9c10` | 强制固定UUID，只支持**UUIDv4**标准格式 |
 | **PROXYIP** | ❌ | `proxyip.cmliussss.net:443` | 全局自定义反代 IP  |
 | **PROXYIP_COUNTRY_ALLOW** | ❌ | `SG,JP,TW,US,CA` | ProxyIP 国家/地区白名单，默认启用；显式设为空字符串可关闭过滤，只允许两位 ISO 国家代码 |
-| **PROXYIP_COUNTRY_CACHE_TTL** | ❌ | `86400` | 国家查询成功结果的内存缓存时间，单位秒 |
+| **PROXYIP_COUNTRY_CACHE_TTL** | ❌ | `36000` | 国家查询成功结果的内存缓存时间，单位秒 |
 | **PROXYIP_COUNTRY_FAIL_OPEN** | ❌ | `false` | 所有 GeoIP 服务均失败或地址无法识别时是否保留候选；默认关闭以避免未知地区进入 ProxyIP 池 |
 | **PROXYIP_COUNTRY_PROVIDERS** | ❌ | `country-is,ip-api,ipwho-is` | GeoIP 服务链；仅将前一服务未确认的 IP 交给下一服务 |
 | **URL** | ❌ | `https://cloudflare-error-page-3th.pages.dev` | 默认主页伪装地址（可填写网页 URL 或 `1101`） |
@@ -156,7 +156,7 @@
 
    ```text
    PROXYIP_COUNTRY_ALLOW=SG,JP,TW,US,CA
-   PROXYIP_COUNTRY_CACHE_TTL=86400
+   PROXYIP_COUNTRY_CACHE_TTL=36000
    PROXYIP_COUNTRY_FAIL_OPEN=false
    PROXYIP_COUNTRY_PROVIDERS=country-is,ip-api,ipwho-is
    ```
