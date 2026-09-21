@@ -30,6 +30,7 @@ const context = { Set, Map, String, Number, Math, Date, console, log: () => {} }
 vm.createContext(context);
 vm.runInContext([
   extractFunction('解析国家代码白名单'),
+  extractFunction('解析反代国家服务列表'),
   extractFunction('解析反代国家过滤配置'),
   extractFunction('筛选反代国家候选'),
   extractFunction('应用反代国家过滤'),
@@ -38,19 +39,19 @@ vm.runInContext([
 ].join('\n'), context);
 
 const disabled = context.解析反代国家过滤配置({});
-assert.equal(disabled.允许国家.size, 0);
-assert.equal(disabled.查询API, 'https://api.country.is/');
+assert.deepEqual([...disabled.允许国家], ['SG', 'JP', 'TW', 'US', 'CA']);
+assert.deepEqual([...disabled.服务列表], ['country-is', 'ip-api', 'ipwho-is']);
 assert.equal(disabled.查询失败放行, false);
 assert.equal(disabled.缓存毫秒, 86_400_000);
 
 const configured = context.解析反代国家过滤配置({
-  PROXYIP_COUNTRY_ALLOW: 'SG,JP,TW,US,CA',
-  PROXYIP_COUNTRY_API: 'https://geo.example/',
+  PROXYIP_COUNTRY_ALLOW: 'DE,FR',
+  PROXYIP_COUNTRY_PROVIDERS: 'ipwho-is,country-is',
   PROXYIP_COUNTRY_CACHE_TTL: '3600',
   PROXYIP_COUNTRY_FAIL_OPEN: 'true'
 });
-assert.deepEqual([...configured.允许国家], ['SG', 'JP', 'TW', 'US', 'CA']);
-assert.equal(configured.查询API, 'https://geo.example/');
+assert.deepEqual([...configured.允许国家], ['DE', 'FR']);
+assert.deepEqual([...configured.服务列表], ['ipwho-is', 'country-is']);
 assert.equal(configured.缓存毫秒, 3_600_000);
 assert.equal(configured.查询失败放行, true);
 
@@ -59,7 +60,7 @@ assert.equal(configured.查询失败放行, true);
   let lookups = 0;
   const filtered = await context.应用反代国家过滤(candidates, {
     允许国家: new Set(['SG', 'JP']),
-    查询API: 'https://geo.example/',
+    服务列表: ['country-is'],
     缓存毫秒: 1000,
     查询失败放行: false
   }, async ips => {
@@ -70,8 +71,9 @@ assert.equal(configured.查询失败放行, true);
   assert.deepEqual(JSON.parse(JSON.stringify(filtered)), [['1.1.1.1', 443], ['3.3.3.3', 443]]);
   assert.equal(lookups, 1);
 
-  const untouched = await context.应用反代国家过滤(candidates, disabled, async () => {
-    throw new Error('disabled filter must not query GeoIP');
+  const explicitlyDisabled = context.解析反代国家过滤配置({ PROXYIP_COUNTRY_ALLOW: '' });
+  const untouched = await context.应用反代国家过滤(candidates, explicitlyDisabled, async () => {
+    throw new Error('explicitly disabled filter must not query GeoIP');
   });
   assert.deepEqual(JSON.parse(JSON.stringify(untouched)), candidates);
 

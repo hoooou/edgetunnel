@@ -19,11 +19,23 @@ function 解析国家代码白名单(值) {
 	return 结果;
 }
 
+function 解析反代国家服务列表(值) {
+	const 支持服务 = new Set(['country-is', 'ip-api', 'ipwho-is']), 结果 = [];
+	for (const 项 of String(值 || '').split(',')) {
+		const 服务 = 项.trim().toLowerCase();
+		if (支持服务.has(服务) && !结果.includes(服务)) 结果.push(服务);
+	}
+	return 结果;
+}
+
 function 解析反代国家过滤配置(env = {}) {
-	const 缓存秒 = Math.max(0, Number(env.PROXYIP_COUNTRY_CACHE_TTL) || 24 * 60 * 60);
+	const 白名单值 = env.PROXYIP_COUNTRY_ALLOW === undefined ? 'SG,JP,TW,US,CA' : env.PROXYIP_COUNTRY_ALLOW;
+	const 服务值 = env.PROXYIP_COUNTRY_PROVIDERS === undefined ? 'country-is,ip-api,ipwho-is' : env.PROXYIP_COUNTRY_PROVIDERS;
+	const 缓存原始值 = env.PROXYIP_COUNTRY_CACHE_TTL === undefined ? 24 * 60 * 60 : Number(env.PROXYIP_COUNTRY_CACHE_TTL);
+	const 缓存秒 = Number.isFinite(缓存原始值) ? Math.max(0, 缓存原始值) : 24 * 60 * 60;
 	return {
-		允许国家: 解析国家代码白名单(env.PROXYIP_COUNTRY_ALLOW),
-		查询API: String(env.PROXYIP_COUNTRY_API || 'https://api.country.is/').trim(),
+		允许国家: 解析国家代码白名单(白名单值),
+		服务列表: 解析反代国家服务列表(服务值),
 		缓存毫秒: 缓存秒 * 1000,
 		查询失败放行: ['1', 'true'].includes(String(env.PROXYIP_COUNTRY_FAIL_OPEN || '').toLowerCase())
 	};
@@ -39,34 +51,79 @@ function 筛选反代国家候选(候选列表, 国家映射, 允许国家, 查�
 	});
 }
 
-async function 查询反代IP国家(IP列表, 查询API = 'https://api.country.is/', 缓存毫秒 = 24 * 60 * 60 * 1000, fetcher = fetch, 当前时间 = Date.now()) {
+async function 查询单个反代国家服务(服务, IP列表, fetcher = fetch) {
+	const 结果 = new Map();
+	if (!IP列表.length) return 结果;
+	if (服务 === 'country-is') {
+		for (let i = 0; i < IP列表.length; i += 100) {
+			const 本批IP = IP列表.slice(i, i + 100);
+			const response = await fetcher('https://api.country.is/', {
+				method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, body: JSON.stringify(本批IP)
+			});
+			if (!response.ok) throw new Error(`country-is HTTP ${response.status || 'error'}`);
+			const 数据 = await response.json();
+			if (!Array.isArray(数据)) throw new Error('country-is response is not an array');
+			for (const 项 of 数据) {
+				const ip = String(项?.ip || '').replace(/^\[|\]$/g, ''), 国家代码 = String(项?.country || '').trim().toUpperCase();
+				if (ip && /^[A-Z]{2}$/.test(国家代码)) 结果.set(ip, 国家代码);
+			}
+		}
+		return 结果;
+	}
+	if (服务 === 'ip-api') {
+		for (let i = 0; i < IP列表.length; i += 100) {
+			const 本批IP = IP列表.slice(i, i + 100);
+			const response = await fetcher('http://ip-api.com/batch?fields=status,message,query,countryCode', {
+				method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, body: JSON.stringify(本批IP.map(query => ({ query })))
+			});
+			if (!response.ok) throw new Error(`ip-api HTTP ${response.status || 'error'}`);
+			const 数据 = await response.json();
+			if (!Array.isArray(数据)) throw new Error('ip-api response is not an array');
+			for (const 项 of 数据) {
+				const ip = String(项?.query || '').replace(/^\[|\]$/g, ''), 国家代码 = String(项?.countryCode || '').trim().toUpperCase();
+				if (项?.status === 'success' && ip && /^[A-Z]{2}$/.test(国家代码)) 结果.set(ip, 国家代码);
+			}
+		}
+		return 结果;
+	}
+	if (服务 === 'ipwho-is') {
+		for (let i = 0; i < IP列表.length; i += 10) {
+			const 本批结果 = await Promise.all(IP列表.slice(i, i + 10).map(async ip => {
+				try {
+					const response = await fetcher(`https://ipwho.is/${encodeURIComponent(ip)}?fields=success,ip,country_code,message`, { headers: { 'Accept': 'application/json' } });
+					if (!response.ok) return null;
+					const 项 = await response.json(), 国家代码 = String(项?.country_code || '').trim().toUpperCase();
+					return 项?.success && /^[A-Z]{2}$/.test(国家代码) ? [String(项.ip || ip).replace(/^\[|\]$/g, ''), 国家代码] : null;
+				} catch (_) { return null }
+			}));
+			for (const 项 of 本批结果) if (项) 结果.set(项[0], 项[1]);
+		}
+		return 结果;
+	}
+	return 结果;
+}
+
+async function 查询反代IP国家(IP列表, 服务列表 = ['country-is', 'ip-api', 'ipwho-is'], 缓存毫秒 = 24 * 60 * 60 * 1000, fetcher = fetch, 当前时间 = Date.now()) {
 	const 去重IP = [...new Set((IP列表 || []).map(ip => String(ip || '').replace(/^\[|\]$/g, '')).filter(Boolean))];
-	const 结果 = new Map(), 待查询 = [];
+	const 结果 = new Map(), 待查询 = new Set();
 	for (const ip of 去重IP) {
 		const 缓存项 = 反代国家查询缓存.get(ip);
 		if (缓存项 && 缓存项.过期时间 > 当前时间) 结果.set(ip, 缓存项.国家代码);
-		else 待查询.push(ip);
+		else 待查询.add(ip);
 	}
-	for (let i = 0; i < 待查询.length; i += 100) {
-		const 本批IP = 待查询.slice(i, i + 100);
+	for (const 服务 of 服务列表 || []) {
+		if (待查询.size === 0) break;
 		try {
-			const response = await fetcher(查询API, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-				body: JSON.stringify(本批IP)
-			});
-			if (!response.ok) throw new Error(`GeoIP HTTP ${response.status || 'error'}`);
-			const 数据 = await response.json();
-			if (!Array.isArray(数据)) throw new Error('GeoIP response is not an array');
-			for (const 项 of 数据) {
-				const ip = String(项?.ip || '').replace(/^\[|\]$/g, '');
-				const 国家代码 = String(项?.country || '').trim().toUpperCase();
-				if (!ip || !/^[A-Z]{2}$/.test(国家代码)) continue;
+			const 服务结果 = await 查询单个反代国家服务(服务, [...待查询], fetcher);
+			for (const [ip, 国家代码] of 服务结果) {
+				if (!待查询.has(ip)) continue;
 				结果.set(ip, 国家代码);
 				反代国家查询缓存.set(ip, { 国家代码, 过期时间: 当前时间 + Math.max(0, Number(缓存毫秒) || 0) });
+				待查询.delete(ip);
 			}
+			log(`[反代国家过滤] ${服务} 查询完成，确认 ${服务结果.size} 个，剩余 ${待查询.size} 个`);
 		} catch (error) {
-			log(`[反代国家过滤] GeoIP 查询失败: ${error?.message || error}`);
+			log(`[反代国家过滤] ${服务} 查询失败: ${error?.message || error}`);
 		}
 	}
 	return 结果;
@@ -75,9 +132,9 @@ async function 查询反代IP国家(IP列表, 查询API = 'https://api.country.i
 async function 应用反代国家过滤(候选列表, 配置 = 当前反代国家过滤配置, 查询器 = 查询反代IP国家) {
 	if (!配置?.允许国家 || 配置.允许国家.size === 0) return 候选列表;
 	const 可查询IP = [...new Set(候选列表.map(([地址]) => String(地址 || '').replace(/^\[|\]$/g, '')).filter(地址 => /^(?:\d{1,3}\.){3}\d{1,3}$/.test(地址) || 地址.includes(':')))];
-	const 国家映射 = await 查询器(可查询IP, 配置.查询API, 配置.缓存毫秒);
+	const 国家映射 = await 查询器(可查询IP, 配置.服务列表, 配置.缓存毫秒);
 	const 过滤结果 = 筛选反代国家候选(候选列表, 国家映射, 配置.允许国家, 配置.查询失败放行);
-	log(`[反代国家过滤] 白名单: ${[...配置.允许国家].join(',')} | 过滤前: ${候选列表.length} | 过滤后: ${过滤结果.length} | 查询失败放行: ${配置.查询失败放行 ? '是' : '否'}`);
+	log(`[反代国家过滤] 白名单: ${[...配置.允许国家].join(',')} | 服务: ${(配置.服务列表 || []).join(',')} | 过滤前: ${候选列表.length} | 过滤后: ${过滤结果.length} | 查询失败放行: ${配置.查询失败放行 ? '是' : '否'}`);
 	return 过滤结果;
 }
 ///////////////////////////////////////////////////////查杀特征码///////////////////////////////////////////////
